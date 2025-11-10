@@ -4,6 +4,7 @@ import numpy as np
 import sqlite3
 import json
 from datetime import datetime
+import os
 
 # -----------------------------
 # CONNECT TO DATABASE
@@ -241,3 +242,6 @@ if uploaded_file:
         file_name="cleaned_output.csv",
         mime="text/csv"
     )
+
+st.sidebar.write("Database File Exists:", os.path.exists("outputs.db"))
+st.sidebar.write("DB Path:", os.path.abspath("outputs.db"))
