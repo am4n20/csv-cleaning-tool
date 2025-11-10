@@ -1,40 +1,61 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
+import sqlite3
 import json
-import tempfile
 from datetime import datetime
 
 # -----------------------------
-# CLOUD-SAFE HISTORY (SESSION STATE)
+# CONNECT TO DATABASE
 # -----------------------------
-if "history" not in st.session_state:
-    st.session_state["history"] = []
+def init_db():
+    conn = sqlite3.connect("outputs.db", check_same_thread=False)
+    cursor = conn.cursor()
+
+    # Create table to store history + cleaned CSV content
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clean_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT,
+            timestamp TEXT,
+            actions TEXT,
+            rows INTEGER,
+            columns TEXT,
+            cleaned_csv TEXT
+        )
+    """)
+
+    conn.commit()
+    return conn
+
+
+conn = init_db()
+
 
 # -----------------------------
-# SAVE HISTORY (CLOUD SAFE VERSION)
+# SAVE HISTORY + CLEANED CSV TO DATABASE
 # -----------------------------
-def save_history(filename, actions, cleaned_df):
-    # Use temp directory for cloud-safe file writes
-    temp_dir = tempfile.gettempdir()
-    
-    cleaned_filename = f"{os.path.splitext(filename)[0]}_cleaned_{int(datetime.now().timestamp())}.csv"
-    cleaned_path = os.path.join(temp_dir, cleaned_filename)
+def save_to_db(filename, actions, cleaned_df):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Save cleaned CSV for download
-    cleaned_df.to_csv(cleaned_path, index=False)
+    cleaned_csv_text = cleaned_df.to_csv(index=False)
 
-    entry = {
-        "filename": filename,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "actions": actions,
-        "cleaned_file": cleaned_path,
-        "rows": len(cleaned_df),
-        "columns": list(cleaned_df.columns),
-    }
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO clean_history
+        (filename, timestamp, actions, rows, columns, cleaned_csv)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        filename,
+        timestamp,
+        json.dumps(actions),
+        len(cleaned_df),
+        json.dumps(list(cleaned_df.columns)),
+        cleaned_csv_text
+    ))
 
-    st.session_state["history"].append(entry)
+    conn.commit()
+
 
 # -----------------------------
 # AUTO-CLEAN FUNCTION
@@ -49,27 +70,28 @@ def auto_clean(df):
     if before != after:
         actions.append(f"Removed {before - after} duplicate rows.")
 
-    # Fill missing numeric values
+    # Fill missing numeric
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     for col in numeric_cols:
         if df[col].isna().sum() > 0:
             df[col] = df[col].fillna(df[col].mean())
             actions.append(f"Filled missing numeric values in '{col}' with mean.")
 
-    # Fill missing categorical values
+    # Fill missing categorical
     cat_cols = df.select_dtypes(include=["object"]).columns
     for col in cat_cols:
         if df[col].isna().sum() > 0:
             df[col] = df[col].fillna(df[col].mode()[0])
             actions.append(f"Filled missing categorical values in '{col}' with mode.")
 
-    # Strip spaces
+    # Strip whitespace
     for col in cat_cols:
         df[col] = df[col].astype(str).str.strip()
 
     actions.append("Auto-clean completed.")
 
     return df, actions
+
 
 # -----------------------------
 # DATA QUALITY REPORT
@@ -89,21 +111,22 @@ def quality_report(df):
     st.write("### Basic Statistics")
     st.dataframe(df.describe(include="all"))
 
+
 # -----------------------------
-# COLUMN-LEVEL CLEANING
+# COLUMN TOOLS
 # -----------------------------
 def column_tools(df):
     st.subheader("🧰 Column-Level Cleaning Tools")
 
-    col = st.selectbox("Select a column to modify:", df.columns)
+    col = st.selectbox("Select a column:", df.columns)
 
     action = st.radio(
         "Choose an operation:",
-        ["Rename column", "Drop column", "Convert to datetime", "Apply custom formula"],
+        ["Rename column", "Drop column", "Convert to datetime", "Apply custom formula"]
     )
 
     if action == "Rename column":
-        new_name = st.text_input("Enter new column name:")
+        new_name = st.text_input("New column name:")
         if st.button("Rename"):
             df.rename(columns={col: new_name}, inplace=True)
             st.success(f"Column '{col}' renamed to '{new_name}'")
@@ -116,11 +139,11 @@ def column_tools(df):
     elif action == "Convert to datetime":
         if st.button("Convert"):
             df[col] = pd.to_datetime(df[col], errors="coerce")
-            st.success(f"Converted '{col}' to datetime format")
+            st.success(f"Converted '{col}' to datetime")
 
     elif action == "Apply custom formula":
-        st.write("Example: `value.lower()`, `value.replace('-', '')`")
-        formula = st.text_input("Enter a Python expression using 'value':")
+        example = st.code("value.lower()", language="python")
+        formula = st.text_input("Enter expression using variable 'value':")
         if st.button("Apply"):
             try:
                 df[col] = df[col].apply(lambda value: eval(formula))
@@ -130,39 +153,44 @@ def column_tools(df):
 
     return df
 
+
 # -----------------------------
-# VIEW HISTORY (CLOUD SAFE)
+# VIEW HISTORY FROM DATABASE
 # -----------------------------
 def view_history():
-    st.title("📁 Cleaning History")
+    st.title("📁 Cleaning History (Database Stored)")
 
-    history = st.session_state.get("history", [])
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clean_history ORDER BY id DESC")
+    rows = cursor.fetchall()
 
-    if len(history) == 0:
-        st.info("No cleaning history yet.")
+    if len(rows) == 0:
+        st.info("No history available yet.")
         return
 
-    for entry in history:
-        st.markdown("### ✅ Cleaned File")
-        st.write(f"**File:** {entry['filename']}")
-        st.write(f"**Timestamp:** {entry['timestamp']}")
-        st.write(f"**Rows:** {entry['rows']}")
-        st.write(f"**Columns:** {entry['columns']}")
+    for row in rows:
+        id, filename, timestamp, actions_json, rowcount, columns_json, cleaned_csv_text = row
 
-        st.write("**Actions Performed:**")
-        for a in entry["actions"]:
-            st.write(f"- {a}")
+        st.markdown("### ✅ Cleaned File Record")
+        st.write(f"**File:** {filename}")
+        st.write(f"**Timestamp:** {timestamp}")
+        st.write(f"**Rows:** {rowcount}")
+        st.write(f"**Columns:** {json.loads(columns_json)}")
 
-        # Download button
-        with open(entry["cleaned_file"], "rb") as f:
-            st.download_button(
-                label="Download Cleaned File",
-                data=f,
-                file_name=os.path.basename(entry["cleaned_file"]),
-                mime="text/csv",
-            )
+        st.write("**Actions:**")
+        for action in json.loads(actions_json):
+            st.write(f"- {action}")
+
+        # Download cleaned CSV from DB
+        st.download_button(
+            "Download Cleaned File",
+            data=cleaned_csv_text.encode(),
+            file_name=f"{filename}_cleaned.csv",
+            mime="text/csv"
+        )
 
         st.write("---")
+
 
 # -----------------------------
 # MAIN UI
@@ -174,40 +202,42 @@ if page == "Cleaning History":
     view_history()
     st.stop()
 
-st.title("🧼 CSV Data Cleaning Tool (Enhanced Version)")
+st.title("🧼 CSV Data Cleaning Tool (With SQLite Backend)")
 
-uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    st.write("### Preview of Uploaded Data")
+    st.write("### Uploaded Data Preview")
     st.dataframe(df.head())
     st.write("---")
 
-    # Auto-clean
+    # Auto Clean
     if st.button("⚡ Auto Clean Dataset"):
         cleaned, actions = auto_clean(df.copy())
         st.dataframe(cleaned.head())
-        save_history(uploaded_file.name, actions, cleaned)
-        st.success("Auto-clean completed and saved to history!")
+        save_to_db(uploaded_file.name, actions, cleaned)
+        st.success("Auto-clean complete and saved to database!")
 
     st.write("---")
 
-    # Data quality report
+    # Data Quality Report
     if st.checkbox("Show Data Quality Report"):
         quality_report(df)
 
     st.write("---")
 
-    # Column tools
+    # Column Tools
     st.write("### Advanced Column Tools")
     df = column_tools(df)
 
     st.write("---")
 
-    # Download cleaned file
-    st.write("### Download Final Cleaned File")
+    # Download cleaned file directly
     csv = df.to_csv(index=False).encode()
     st.download_button(
-        "Download", data=csv, file_name="cleaned_output.csv", mime="text/csv"
+        "Download Current Cleaned File",
+        data=csv,
+        file_name="cleaned_output.csv",
+        mime="text/csv"
     )
