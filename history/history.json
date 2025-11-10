@@ -1,0 +1,30 @@
+[
+    {
+        "filename": "submission_12 (1).csv",
+        "timestamp": "2025-11-10 08:44:09",
+        "actions": [
+            "Auto-clean completed."
+        ],
+        "cleaned_file": "history\\cleaned_files\\submission_12 (1)_cleaned_1762744449.csv",
+        "rows": 304,
+        "columns": [
+            "participant_id",
+            "ADHD",
+            "Sex_F"
+        ]
+    },
+    {
+        "filename": "submission_12.csv",
+        "timestamp": "2025-11-10 08:47:12",
+        "actions": [
+            "Auto-clean completed."
+        ],
+        "cleaned_file": "history\\cleaned_files\\submission_12_cleaned_1762744632.csv",
+        "rows": 304,
+        "columns": [
+            "participant_id",
+            "ADHD",
+            "Sex_F"
+        ]
+    }
+]
