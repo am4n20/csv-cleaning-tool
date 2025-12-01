@@ -10,7 +10,13 @@ from datetime import datetime
 # INITIALIZE DATABASE
 # -----------------------------
 def init_db():
-    conn = sqlite3.connect("outputs.db", check_same_thread=False)
+    db_dir = "data"
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+    db_path = os.path.join(db_dir, "outputs.db")
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -28,7 +34,15 @@ def init_db():
     conn.commit()
     return conn
 
-conn = init_db()
+
+# -----------------------------
+# GLOBAL DB CONNECTION
+# -----------------------------
+if "conn" not in st.session_state:
+    st.session_state.conn = init_db()
+
+conn = st.session_state.conn
+
 
 # -----------------------------
 # SAVE CLEANED CSV + METADATA TO DB
@@ -53,12 +67,12 @@ def save_to_db(filename, actions, cleaned_df):
 
     conn.commit()
 
+
 # -----------------------------
 # AUTO CLEAN FUNCTION
 # -----------------------------
 def auto_clean(df):
     actions = []
-
     before = len(df)
     df = df.drop_duplicates()
     after = len(df)
@@ -81,33 +95,29 @@ def auto_clean(df):
         df[col] = df[col].astype(str).str.strip()
 
     actions.append("Auto-clean completed.")
-
     return df, actions
+
 
 # -----------------------------
 # QUALITY REPORT
 # -----------------------------
 def quality_report(df):
     st.subheader("📊 Data Quality Report")
-
     st.write("### Missing Values per Column")
     st.bar_chart(df.isna().sum())
-
     st.write("### Data Types")
     st.dataframe(df.dtypes.to_frame("dtype"))
-
     st.write("### Duplicate Rows")
     st.write(f"Total duplicates: **{df.duplicated().sum()}**")
-
     st.write("### Statistics Summary")
     st.dataframe(df.describe(include="all"))
 
+
 # -----------------------------
-# COLUMN LEVEL TOOLS
+# COLUMN TOOLS
 # -----------------------------
 def column_tools(df):
     st.subheader("🧰 Column-Level Cleaning Tools")
-
     col = st.selectbox("Select a column:", df.columns)
 
     action = st.radio(
@@ -143,12 +153,12 @@ def column_tools(df):
 
     return df
 
+
 # -----------------------------
-# CLEANING HISTORY (FROM DB)
+# CLEANING HISTORY
 # -----------------------------
 def view_history():
     st.title("📁 Cleaning History")
-
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM clean_history ORDER BY id DESC")
     rows = cursor.fetchall()
@@ -180,73 +190,23 @@ def view_history():
 
         st.write("---")
 
-# -----------------------------
-# DATABASE VIEWER (NEW PAGE)
-# -----------------------------
-def database_viewer():
-    st.title("🗄️ Database Viewer (Admin Panel)")
-
-    st.write("Database Path:")
-    st.code(os.path.abspath("outputs.db"))
-
-    # Download DB
-    if os.path.exists("outputs.db"):
-        with open("outputs.db", "rb") as db:
-            st.download_button("⬇️ Download Database File", db, "outputs.db")
-
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM clean_history")
-    rows = cursor.fetchall()
-
-    st.subheader("📌 Table: clean_history")
-    if len(rows) == 0:
-        st.info("Database is empty.")
-        return
-
-    df = pd.DataFrame(rows, columns=[
-        "id", "filename", "timestamp", "actions", "rows", "columns", "cleaned_csv"
-    ])
-
-    st.dataframe(df)
-
-    st.subheader("🔍 Inspect Cleaned CSV")
-    record_id = st.number_input("Enter Record ID", min_value=1, step=1)
-
-    cursor.execute("SELECT cleaned_csv FROM clean_history WHERE id=?", (record_id,))
-    result = cursor.fetchone()
-
-    if result:
-        cleaned_csv_text = result[0]
-        st.code(cleaned_csv_text, language="csv")
-
-        st.download_button(
-            "Download This Cleaned CSV",
-            cleaned_csv_text.encode(),
-            file_name=f"cleaned_record_{record_id}.csv",
-            mime="text/csv"
-        )
-    else:
-        st.warning("Record not found.")
 
 # -----------------------------
 # MAIN UI
 # -----------------------------
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to:", ["Upload & Clean", "Cleaning History", "Database Viewer"])
+page = st.sidebar.radio("Go to:", ["Upload & Clean", "Cleaning History"])
 
-# Debug info for presenting to sir
-st.sidebar.write("Database File Exists:", os.path.exists("outputs.db"))
-st.sidebar.write("DB Path:", os.path.abspath("outputs.db"))
+# REMOVE DEBUG INFO (requested)
+# No DB Path
+# No DB Exists
+# No Database Viewer link
 
 if page == "Cleaning History":
     view_history()
     st.stop()
 
-if page == "Database Viewer":
-    database_viewer()
-    st.stop()
-
-st.title("🧼 CSV Data Cleaning Tool (With SQLite Backend)")
+st.title("🧼 CSV Data Cleaning Tool")
 
 uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
 
