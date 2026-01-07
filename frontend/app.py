@@ -8,6 +8,10 @@ import os
 # ===============================
 API = os.getenv("API_URL", "http://localhost:8000")
 
+# Ensure API URL has a schema (needed for Render which provides just the host)
+if not API.startswith("http"):
+    API = f"https://{API}"
+
 st.set_page_config(
     page_title="CSV Data Cleaning Tool", 
     layout="wide",

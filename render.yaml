@@ -23,4 +23,4 @@ services:
         fromService:
           type: web
           name: csv-tool-backend
-          property: url
+          property: host
